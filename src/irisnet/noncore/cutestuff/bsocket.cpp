@@ -97,7 +97,9 @@ public slots:
 class BSocket::Private
 {
 public:
-	Private()
+	Private(BSocket *_q) :
+		ndns(_q),
+		srv(_q)
 	{
 		qsock = 0;
 		qsock_relay = 0;
@@ -111,13 +113,14 @@ public:
 	SrvResolver srv;
 	QString host;
 	int port;
+	QHostAddress addr;
 	//SafeDelete sd;
 };
 
 BSocket::BSocket(QObject *parent)
 :ByteStream(parent)
 {
-	d = new Private;
+	d = new Private(this);
 	connect(&d->ndns, SIGNAL(resultsReady()), SLOT(ndns_done()));
 	connect(&d->srv, SIGNAL(resultsReady()), SLOT(srv_done()));
 
@@ -159,16 +162,17 @@ void BSocket::reset(bool clear)
 	if(d->ndns.isBusy())
 		d->ndns.stop();
 	d->state = Idle;
+	d->addr = QHostAddress();
 }
 
 void BSocket::ensureSocket()
 {
 	if(!d->qsock) {
-		d->qsock = new QTcpSocket;
+		d->qsock = new QTcpSocket(this);
 #if QT_VERSION >= 0x030200
 		d->qsock->setReadBufferSize(READBUFSIZE);
 #endif
-		d->qsock_relay = new QTcpSocketSignalRelay(d->qsock);
+		d->qsock_relay = new QTcpSocketSignalRelay(d->qsock, this);
 		connect(d->qsock_relay, SIGNAL(hostFound()), SLOT(qs_hostFound()));
 		connect(d->qsock_relay, SIGNAL(connected()), SLOT(qs_connected()));
 		connect(d->qsock_relay, SIGNAL(disconnected()), SLOT(qs_closed()));
@@ -185,6 +189,16 @@ void BSocket::connectToHost(const QString &host, quint16 port)
 	d->port = port;
 	d->state = HostLookup;
 	d->ndns.resolve(d->host);
+}
+
+void BSocket::connectToHost(const QHostAddress &addr, quint16 port)
+{
+	reset(true);
+	d->host = addr.toString();
+	d->addr = addr;
+	d->port = port;
+	d->state = Connecting;
+	do_connect();
 }
 
 void BSocket::connectToServer(const QString &srv, const QString &type)
@@ -357,7 +371,10 @@ void BSocket::do_connect()
 	fprintf(stderr, "BSocket: Connecting to %s:%d\n", d->host.latin1(), d->port);
 #endif
 	ensureSocket();
-	d->qsock->connectToHost(d->host, d->port);
+	if(!d->addr.isNull())
+		d->qsock->connectToHost(d->addr, d->port);
+	else
+		d->qsock->connectToHost(d->host, d->port);
 }
 
 void BSocket::qs_hostFound()
